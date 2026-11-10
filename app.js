@@ -7,11 +7,9 @@
      Pure helpers (exported on window.StudyCore for testing)
      ========================================================= */
 
-  // 0→a, 1→b … 25→z, 26→a1, 27→b1 … 52→a2 …
+  // 0→1, 1→2, 2→3 …
   function nicknameFor(n) {
-    var L = 'abcdefghijklmnopqrstuvwxyz';
-    var k = Math.floor(n / 26);
-    return L[n % 26] + (k ? String(k) : '');
+    return String(n + 1);
   }
 
   function seedFrom(str) {
@@ -59,23 +57,21 @@
     return s === 0 ? 0 : s; // never -0
   }
 
-  // 'ok' | 'needed' | 'waived-error' | 'waived-incomplete'
-  function clipRequirement(cl, maxPlays) {
+  // 'ok' | 'needed' | 'waived-error'
+  // completes counts finished required listens (the locked first play).
+  function clipRequirement(cl) {
     if (cl.completes >= 1) return 'ok';
     if (cl.unavailable) return 'waived-error';
-    if (cl.plays >= maxPlays) return 'waived-incomplete';
     return 'needed';
   }
 
-  function audioIssues(clips, maxPlays) {
+  function audioIssues(clips) {
     var out = [];
     ['A', 'B'].forEach(function (c) {
       var cl = clips[c];
       if (cl.interrupted) out.push(c + ':interrupted x' + cl.interrupted);
       if (cl.errors) out.push(c + ':load_failures x' + cl.errors);
-      var r = clipRequirement(cl, maxPlays);
-      if (r === 'waived-error') out.push(c + ':unavailable');
-      if (r === 'waived-incomplete') out.push(c + ':never_finished');
+      if (clipRequirement(cl) === 'waived-error') out.push(c + ':unavailable');
     });
     return out.join('; ');
   }
@@ -96,11 +92,16 @@
   var CFG = window.STUDY_CONFIG || {};
   var params = new URLSearchParams(location.search);
   var DEMO = CFG.demoMode === true || params.get('demo') === '1';
-  var MAX = CFG.maxPlays || 2;
+  var REQ = CFG.requiredListenSeconds || 15;
+  var LABELS = (CFG.sliderLabels || []).slice().sort(function (x, y) { return x.value - y.value; });
+  var SMIN = LABELS.length ? LABELS[0].value : -3;
+  var SMAX = LABELS.length ? LABELS[LABELS.length - 1].value : 3;
+  function sliderPct(v) { return (v - SMIN) / (SMAX - SMIN); }
   var T = CFG.text || {};
   var STORE_KEY = 'musicStudy:' + (CFG.studyId || 'study') + (DEMO ? ':demo' : '');
   var DEMO_DB_KEY = 'musicStudy:' + (CFG.studyId || 'study') + ':demoDb';
 
+  var QUESTIONS = CFG.additionalQuestions || [];
   var SONGS = CFG.songs || [];
   if (DEMO) {
     SONGS = [];
@@ -133,7 +134,7 @@
     return {
       startedAt: new Date().toISOString(),
       clips: { A: newClipState(), B: newClipState() },
-      slider: { value: 0, set: false, viaButton: false },
+      slider: { value: 0, set: false },
       pending: null
     };
   }
@@ -203,6 +204,8 @@
         db.sessions.push({ nickname: nick, session_id: p.sessionId, started_at: now, trials_completed: 0,
           total_trials: p.totalTrials, status: 'in_progress', completed_at: '', last_activity_at: now,
           device: p.device || '', trial_order: p.trialOrder || '' });
+        var row = db.sessions[db.sessions.length - 1];
+        QUESTIONS.forEach(function (q) { row[q.id] = (p.answers || {})[q.id] != null ? p.answers[q.id] : ''; });
         storeSet(DEMO_DB_KEY, db);
         return { ok: true, nickname: nick };
       }
@@ -215,7 +218,8 @@
           response_id: rid, nickname: sess.nickname, session_id: p.sessionId, trial_number: p.trial, pair_id: p.pairId,
           clip_a_version: p.clipA, clip_b_version: p.clipB, plays_a: p.playsA, plays_b: p.playsB,
           completed_listens_a: p.completesA, completed_listens_b: p.completesB, slider_raw: p.slider,
-          score_original_vs_ai: standardizedScore(p.slider, p.clipA), used_no_preference_button: p.usedNoPrefButton ? 'yes' : 'no',
+          score_original_vs_ai: standardizedScore(p.slider, p.clipA),
+          preferred_clip: p.preferredClip, preference_label: p.preferenceLabel,
           trial_start: p.trialStart, trial_submit: p.trialSubmit, audio_issues: p.audioIssues || '', server_received_at: now
         });
         sess.trials_completed += 1;
@@ -237,7 +241,7 @@
   function demoClipUrl(pairId, version) {
     var key = pairId + '|' + version;
     if (demoUrlCache[key]) return demoUrlCache[key];
-    var secs = Math.max(0.5, Math.min(20, parseFloat(params.get('secs') || '4')));
+    var secs = Math.max(0.5, Math.min(20, parseFloat(params.get('secs') || '20')));
     var rate = 22050, n = Math.floor(secs * rate);
     var buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
     function str(o, s) { for (var i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); }
@@ -306,7 +310,10 @@
     var agree = el('input', { type: 'checkbox', id: 'agree' });
     var start = el('button', { class: 'btn primary', type: 'button', disabled: true, text: T.startButton || 'Start', id: 'start-btn' });
     agree.addEventListener('change', function () { start.disabled = !agree.checked; });
-    start.addEventListener('click', function () { start.disabled = true; beginSession(); });
+    start.addEventListener('click', function () {
+      start.disabled = true;
+      if (QUESTIONS.length) renderQuestions(); else beginSession({});
+    });
     var card = el('section', { class: 'card intro' }, [
       el('h1', { text: T.title || 'Listening study' }),
       el('div', {}, (T.intro || []).map(function (p) { return el('p', { text: p }); })),
@@ -320,6 +327,49 @@
       start
     ]);
     show(card);
+  }
+
+  function renderQuestions() {
+    var answers = {};
+    var cont = el('button', { class: 'btn primary', type: 'button', disabled: true, text: T.continueButton || 'Continue' });
+    function update() {
+      cont.disabled = !QUESTIONS.every(function (q) { return answers[q.id] != null && answers[q.id] !== ''; });
+    }
+    function field(q, i) {
+      var labelId = 'q-' + i;
+      var input;
+      if (q.type === 'age') {
+        input = el('input', { type: 'number', inputmode: 'numeric', min: '1', max: '120', step: '1', class: 'age-input', 'aria-labelledby': labelId });
+        input.addEventListener('input', function () {
+          var n = parseInt(input.value, 10);
+          answers[q.id] = (n >= 1 && n <= 120 && String(n) === input.value.trim()) ? n : null;
+          update();
+        });
+      } else {
+        var btns = ['Yes', 'No'].map(function (opt) {
+          var b = el('button', { class: 'btn ghost', type: 'button', text: opt, 'aria-pressed': 'false' });
+          b.addEventListener('click', function () {
+            answers[q.id] = opt.toLowerCase();
+            btns.forEach(function (x) {
+              var on = x === b;
+              x.classList.toggle('selected', on);
+              x.setAttribute('aria-pressed', on ? 'true' : 'false');
+            });
+            update();
+          });
+          return b;
+        });
+        input = el('div', { class: 'yesno', role: 'group', 'aria-labelledby': labelId }, btns);
+      }
+      return el('div', { class: 'survey-q' }, [el('p', { class: 'survey-label', id: labelId, text: q.text }), input]);
+    }
+    cont.addEventListener('click', function () { cont.disabled = true; beginSession(answers); });
+    show(el('section', { class: 'card intro' }, [
+      el('h1', { text: T.questionsTitle || 'A few questions' }),
+      T.questionsIntro ? el('p', { class: 'muted', text: T.questionsIntro }) : null,
+      el('div', { class: 'survey' }, QUESTIONS.map(field)),
+      cont
+    ]));
   }
 
   function renderStarting(errMsg) {
@@ -352,10 +402,10 @@
     try { return matchMedia('(pointer: coarse)').matches ? 'touch' : 'desktop'; } catch (e) { return ''; }
   }
 
-  function beginSession() {
+  function beginSession(answers) {
     var sid = uuid();
     var trials = buildTrials(SONGS, sid);
-    S = { v: 1, sessionId: sid, nickname: null, createdAt: new Date().toISOString(), trials: trials, idx: 0, cur: null, done: false };
+    S = { v: 1, sessionId: sid, nickname: null, createdAt: new Date().toISOString(), trials: trials, idx: 0, cur: null, done: false, answers: answers || {} };
     save(); // saved before contacting the server so a refresh reuses the same session ID
     renderStarting();
     startOnServer();
@@ -364,7 +414,7 @@
   function startOnServer() {
     Backend.call({
       action: 'start', sessionId: S.sessionId, totalTrials: S.trials.length,
-      trialOrder: orderString(S.trials), device: deviceType()
+      trialOrder: orderString(S.trials), device: deviceType(), answers: S.answers || {}
     }).then(function (res) {
       S.nickname = res.nickname;
       S.cur = newTrialState();
@@ -377,7 +427,9 @@
   /* =========================================================
      Trial screen + audio engine
      ========================================================= */
-  var player = { els: { A: null, B: null }, attempt: null }; // attempt: {clip, counted, paused, lastPos, timer, fixing}
+  // attempt: the locked first listen {clip, counted, paused, lastPos, timer, fixing}
+  // free: clip currently playing after its first listen is done (free replay/scrub)
+  var player = { els: { A: null, B: null }, attempt: null, free: null };
   var ui = {};
   var saving = false;
   var loadMsg = { A: '', B: '' };
@@ -390,6 +442,7 @@
     });
     if (player.attempt) clearTimeout(player.attempt.timer);
     player.attempt = null;
+    player.free = null;
   }
 
   function lockMediaSession() {
@@ -428,6 +481,7 @@
       a.addEventListener('error', function () { onMediaError(c); });
       a.addEventListener('timeupdate', function () { onTime(c); });
       a.addEventListener('seeking', function () { onSeeking(c); });
+      a.addEventListener('loadedmetadata', function () { updateUI(); });
       a.addEventListener('ratechange', function () { if (a.playbackRate !== 1) a.playbackRate = 1; });
       player.els[c] = a;
     });
@@ -435,16 +489,49 @@
   }
 
   function busy() { return !!player.attempt; }
+  function unlocked(c) { return clips()[c].completes >= 1; }
+  function reqSeconds(a) { return a && a.duration ? Math.min(REQ, a.duration) : REQ; }
 
   function canStart(c) {
     var cl = clips()[c];
-    return !busy() && !saving && !S.cur.pending && !cl.unavailable && cl.plays < MAX;
+    return !busy() && !saving && !S.cur.pending && !cl.unavailable && !unlocked(c);
+  }
+
+  function pauseFree() {
+    var c = player.free;
+    if (!c) return;
+    player.free = null;
+    try { player.els[c].pause(); } catch (e) { /* ignore */ }
+  }
+
+  // After the required listen: Play/Pause toggle, any number of times.
+  function toggleFree(c) {
+    if (busy() || saving || S.cur.pending) return;
+    var a = player.els[c];
+    if (player.free === c) { pauseFree(); updateUI(); return; }
+    pauseFree();
+    player.free = c;
+    loadMsg[c] = '';
+    var p;
+    try { p = a.play(); } catch (e) { p = Promise.reject(e); }
+    Promise.resolve(p).then(function () {
+      clips()[c].plays += 1;
+      save(); updateUI();
+    }, function () {
+      if (player.free !== c) return; // paused before it started
+      player.free = null;
+      loadMsg[c] = 'The clip didn\'t play. Try again.';
+      updateUI();
+    });
+    updateUI();
   }
 
   function startPlay(c) {
     var att = player.attempt;
     if (att && att.clip === c && att.paused) return resumePlay(c);
+    if (unlocked(c)) return toggleFree(c);
     if (!canStart(c)) return;
+    pauseFree();
     var a = player.els[c];
     att = { clip: c, counted: false, paused: false, lastPos: 0, timer: null, fixing: false };
     player.attempt = att;
@@ -470,6 +557,7 @@
   function onPlaying(c) {
     var att = player.attempt;
     var a = player.els[c];
+    if (player.free === c) { updateUI(); return; }
     if (!att || att.clip !== c) { try { a.pause(); } catch (e) { /* */ } return; } // stray start (e.g., OS media key)
     if (att.paused) { att.paused = false; updateUI(); return; }
     if (!att.counted) {
@@ -482,18 +570,27 @@
     updateUI();
   }
 
-  function onEnded(c) {
-    var att = player.attempt;
-    if (!att || att.clip !== c || !att.counted) return;
-    var cl = clips()[c];
+  // The locked first listen reached REQ seconds (or the clip ended sooner).
+  function finishRequired(c) {
+    var a = player.els[c], cl = clips()[c];
+    clearTimeout(player.attempt && player.attempt.timer);
+    player.attempt = null; // cleared first so the pause below isn't treated as a device pause
     cl.completes += 1;
     cl.active = false;
-    player.attempt = null;
+    try { a.pause(); a.currentTime = 0; } catch (e) { /* ignore */ }
     save();
     updateUI();
   }
 
+  function onEnded(c) {
+    if (player.free === c) { player.free = null; updateUI(); return; }
+    var att = player.attempt;
+    if (!att || att.clip !== c || !att.counted) return;
+    finishRequired(c);
+  }
+
   function onPause(c) {
+    if (player.free === c) { player.free = null; updateUI(); return; } // paused by device during free play
     var att = player.attempt, a = player.els[c];
     if (!att || att.clip !== c || !att.counted || a.ended) return;
     if (a.duration && a.currentTime >= a.duration - 0.05) return;
@@ -502,6 +599,11 @@
   }
 
   function onMediaError(c) {
+    if (player.free === c) {
+      player.free = null;
+      loadMsg[c] = 'Playback stopped because of a loading problem. Try again.';
+      updateUI(); return;
+    }
     var att = player.attempt;
     if (!att || att.clip !== c) return;
     if (att.counted) {
@@ -533,9 +635,44 @@
     if (att && att.clip === c && att.counted) {
       if (att.fixing) { att.fixing = false; }
       else if (a.currentTime >= att.lastPos && a.currentTime - att.lastPos < 2) att.lastPos = a.currentTime;
+      if (att.lastPos >= reqSeconds(a)) return finishRequired(c);
     }
-    var bar = ui.clips && ui.clips[c] && ui.clips[c].fill;
-    if (bar && att && att.clip === c) bar.style.width = (a && a.duration ? Math.min(100, (a.currentTime / a.duration) * 100) : 0) + '%';
+    var u = ui.clips && ui.clips[c];
+    if (!u) return;
+    if (att && att.clip === c) u.fill.style.width = Math.min(100, (a.currentTime / reqSeconds(a)) * 100) + '%';
+    updateClipTime(c);
+  }
+
+  function fmtTime(t) {
+    t = Math.max(0, Math.floor(t || 0));
+    return Math.floor(t / 60) + ':' + (t % 60 < 10 ? '0' : '') + (t % 60);
+  }
+
+  function updateClipTime(c) {
+    var u = ui.clips[c], a = player.els[c], att = player.attempt;
+    if (!u || !a) return;
+    if (unlocked(c)) {
+      var dur = a.duration || 0;
+      if (!u.scrubbing) {
+        u.scrub.value = String(dur ? Math.round((a.currentTime / dur) * 1000) : 0);
+        u.scrub.style.setProperty('--pos', (dur ? (a.currentTime / dur) * 100 : 0) + '%');
+      }
+      u.count.textContent = fmtTime(a.currentTime) + ' / ' + fmtTime(dur);
+    } else if (att && att.clip === c && att.counted) {
+      u.count.textContent = Math.min(Math.floor(a.currentTime), Math.round(reqSeconds(a))) + ' of ' + Math.round(reqSeconds(a)) + ' seconds';
+    } else {
+      u.count.textContent = 'Required: first ' + Math.round(reqSeconds(a)) + ' seconds';
+    }
+  }
+
+  function onScrub(c, done) {
+    var u = ui.clips[c], a = player.els[c];
+    if (!unlocked(c) || !a.duration) return;
+    u.scrubbing = !done;
+    var pos = (parseInt(u.scrub.value, 10) / 1000) * a.duration;
+    try { a.currentTime = Math.min(pos, a.duration - 0.05); } catch (e) { /* not seekable yet */ }
+    u.scrub.style.setProperty('--pos', (pos / a.duration * 100) + '%');
+    u.count.textContent = fmtTime(pos) + ' / ' + fmtTime(a.duration);
   }
 
   function onSeeking(c) {
@@ -563,41 +700,48 @@
       var btn = el('button', { type: 'button', class: 'btn play', 'aria-describedby': 'count-' + c });
       btn.addEventListener('click', function () { startPlay(c); });
       var fill = el('div', { class: 'meter-fill' });
+      var meter = el('div', { class: 'meter', 'aria-hidden': 'true' }, [fill]);
+      var scrub = el('input', { type: 'range', class: 'scrub', min: 0, max: 1000, step: 1, value: 0, 'aria-label': 'Clip ' + c + ' position', hidden: true });
+      scrub.addEventListener('input', function () { onScrub(c, false); });
+      scrub.addEventListener('change', function () { onScrub(c, true); });
       var count = el('p', { class: 'count', id: 'count-' + c });
       var status = el('p', { class: 'status' });
-      ui.clips[c] = { btn: btn, fill: fill, count: count, status: status };
+      ui.clips[c] = { btn: btn, fill: fill, meter: meter, scrub: scrub, count: count, status: status, scrubbing: false };
       return el('div', { class: 'clip clip-' + c.toLowerCase() }, [
         el('h2', { text: 'Clip ' + c }),
         btn,
-        el('div', { class: 'meter', 'aria-hidden': 'true' }, [fill]),
+        meter, scrub,
         count, status
       ]);
     }
 
-    var range = el('input', { type: 'range', min: -100, max: 100, step: 1, value: S.cur.slider.value, id: 'pref', 'aria-label': T.question || 'Preference' });
+    var range = el('input', { type: 'range', min: SMIN, max: SMAX, step: 1, value: S.cur.slider.value, id: 'pref', 'aria-label': T.question || 'Preference' });
     var touchedByPointer = false;
-    range.addEventListener('input', function () { setSlider(parseInt(range.value, 10), false); });
-    range.addEventListener('change', function () { setSlider(parseInt(range.value, 10), false); });
+    range.addEventListener('input', function () { setSlider(parseInt(range.value, 10)); });
+    range.addEventListener('change', function () { setSlider(parseInt(range.value, 10)); });
     range.addEventListener('pointerdown', function () { touchedByPointer = true; });
-    range.addEventListener('pointerup', function () { if (touchedByPointer) setSlider(parseInt(range.value, 10), false); touchedByPointer = false; });
+    // tapping the handle where it already sits (e.g. Neutral) still counts as a choice
+    range.addEventListener('pointerup', function () { if (touchedByPointer) setSlider(parseInt(range.value, 10)); touchedByPointer = false; });
+    range.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSlider(parseInt(range.value, 10)); } });
 
-    var labels = CFG.sliderLabels || [];
-    var ticks = el('div', { class: 'ticks', 'aria-hidden': 'true' }, labels.map(function (l, i) {
-      var p = (l.value + 100) / 200;
-      var cls = 'tick' + (i === 0 ? ' first' : i === labels.length - 1 ? ' last' : '');
-      var t = el('div', { class: cls, style: '--p:' + p }, [el('span', { class: 'tick-mark' }), el('span', { class: 'tick-label', text: l.text })]);
+    var ticks = el('div', { class: 'ticks ticks-' + LABELS.length, 'aria-hidden': 'true' }, LABELS.map(function (l, i) {
+      var p = sliderPct(l.value);
+      var cls = 'tick' + (i === 0 ? ' first' : i === LABELS.length - 1 ? ' last' : '') + (l.value === 0 ? ' mid' : '');
+      var t = el('div', { class: cls, style: '--p:' + p }, [
+        el('span', { class: 'tick-mark' }),
+        l.emoji ? el('span', { class: 'tick-emoji', text: l.emoji }) : null,
+        el('span', { class: 'tick-label', text: l.tick || l.text })
+      ]);
       return t;
     }));
 
-    var nopref = el('button', { type: 'button', class: 'btn ghost', text: T.noPreferenceButton || 'No preference' });
-    nopref.addEventListener('click', function () { setSlider(0, true); });
     var readout = el('p', { class: 'readout', id: 'readout' });
     var hint = el('p', { class: 'hint' });
     var submit = el('button', { type: 'button', class: 'btn primary submit', text: T.submitButton || 'Submit' });
     submit.addEventListener('click', submitTrial);
     var errBox = el('div', { class: 'save-error', role: 'alert', hidden: true });
 
-    Object.assign(ui, { range: range, nopref: nopref, readout: readout, hint: hint, submit: submit, errBox: errBox });
+    Object.assign(ui, { range: range, readout: readout, hint: hint, submit: submit, errBox: errBox });
 
     show(el('section', { class: 'card trial' }, [
       el('div', { class: 'topbar' }, [
@@ -612,7 +756,7 @@
         el('div', { class: 'scale-ends', 'aria-hidden': 'true' }, [el('span', { text: '← Clip A' }), el('span', { text: 'Clip B →' })]),
         el('div', { class: 'slider-wrap' }, [range, ticks]),
         readout,
-        el('div', { class: 'actions' }, [nopref, submit]),
+        el('div', { class: 'actions' }, [submit]),
         hint, errBox
       ])
     ]));
@@ -622,21 +766,27 @@
     if (S.cur.pending) sendPending(true); // page was refreshed while saving: resend the identical answer
   }
 
+  function sliderLabel(v) { return LABELS.filter(function (x) { return x.value === v; })[0]; }
+  // plain wording, used for the saved data and screen readers
   function sliderText(v) {
-    if (v === 0) return 'No preference (0)';
-    return (v < 0 ? 'Prefer Clip A' : 'Prefer Clip B') + ' — strength ' + Math.abs(v) + ' of 100 (' + (v > 0 ? '+' : '') + v + ')';
+    var l = sliderLabel(v);
+    return l ? l.text : (v === 0 ? 'Neutral' : 'Prefer Clip ' + (v < 0 ? 'A' : 'B'));
+  }
+  function sliderDisplay(v) {
+    var l = sliderLabel(v);
+    return (l && l.emoji ? l.emoji + ' ' : '') + sliderText(v);
   }
 
-  function setSlider(v, viaButton) {
+  function setSlider(v) {
     if (ui.range.disabled) return;
-    S.cur.slider = { value: v, set: true, viaButton: !!viaButton };
+    S.cur.slider = { value: v, set: true };
     ui.range.value = String(v);
     save();
     updateUI();
   }
 
   function listensOk() {
-    return ['A', 'B'].every(function (c) { return clipRequirement(clips()[c], MAX) !== 'needed'; });
+    return ['A', 'B'].every(function (c) { return clipRequirement(clips()[c]) !== 'needed'; });
   }
 
   function updateUI() {
@@ -651,46 +801,45 @@
       else if (isMine && att.counted) { label = 'Playing…'; disabled = true; }
       else if (isMine) { label = 'Loading…'; disabled = true; }
       else if (cl.unavailable) { label = 'Unavailable'; disabled = true; }
-      else if (cl.plays >= MAX) { label = 'No plays left'; disabled = true; }
+      else if (unlocked(c)) { label = player.free === c ? '❚❚ Pause' : '▶ Play'; disabled = busy() || locked; }
       else { label = cl.plays === 0 ? '▶ Play' : '▶ Play again'; disabled = busy() || locked; }
       u.btn.textContent = label;
       u.btn.disabled = disabled;
-      u.btn.setAttribute('aria-label', 'Clip ' + c + ': ' + label.replace('▶ ', ''));
-      u.count.textContent = cl.plays + ' of ' + MAX + ' plays used';
-      var req = clipRequirement(cl, MAX), st;
-      if (isMine && att.paused) st = 'Paused by your device — tap Resume to continue this play.';
-      else if (isMine && att.counted) st = 'Playing… please listen to the end.';
-      else if (loadMsg[c]) st = loadMsg[c];
-      else if (req === 'ok') st = cl.completes > 1 ? '✓ Listened twice' : '✓ Listened';
+      u.btn.setAttribute('aria-label', 'Clip ' + c + ': ' + label.replace(/^\S+ /, ''));
+      var free = unlocked(c);
+      u.meter.hidden = free;
+      u.scrub.hidden = !free;
+      u.scrub.disabled = !free || locked;
+      updateClipTime(c);
+      var req = clipRequirement(cl), st;
+      if (isMine && att.paused) st = 'Paused by your device — tap Resume to continue this listen.';
+      else if (isMine && att.counted) st = 'Playing… please listen for ' + Math.round(reqSeconds(player.els[c])) + ' seconds.';
+      else if (loadMsg[c] && !free) st = loadMsg[c];
+      else if (req === 'ok') st = loadMsg[c] || '✓ Listened — replay, pause, or drag the bar freely.';
       else if (req === 'waived-error') st = 'Could not be loaded — you may answer without it.';
-      else if (req === 'waived-incomplete') st = 'Playback was interrupted — you may still answer.';
-      else st = cl.plays === 0 ? 'Not played yet' : 'Not finished yet';
-      if (req === 'ok' && loadMsg[c] && !(isMine)) st = '✓ Listened';
+      else st = cl.plays === 0 ? 'Not played yet' : 'Not finished yet — play again from the start.';
       u.status.textContent = st;
-      u.status.className = 'status' + (req === 'ok' ? ' ok' : (loadMsg[c] || req.indexOf('waived') === 0) ? ' warn-text' : '');
-      if (!isMine && !(att && att.clip === c)) u.fill.style.width = cl.completes ? '100%' : '0%';
+      u.status.className = 'status' + (req === 'ok' && !loadMsg[c] ? ' ok' : (loadMsg[c] || req === 'waived-error') ? ' warn-text' : '');
+      if (!isMine) u.fill.style.width = cl.completes ? '100%' : '0%';
     });
 
     var ready = listensOk();
     var sl = S.cur.slider;
     ui.range.disabled = !ready || locked;
-    ui.nopref.disabled = !ready || locked;
     ui.range.value = String(sl.value);
     ui.range.classList.toggle('is-set', sl.set);
-    ui.range.style.setProperty('--fill', ((sl.value + 100) / 2) + '%');
+    ui.range.style.setProperty('--fill', (sliderPct(sl.value) * 100) + '%');
     ui.range.setAttribute('aria-valuetext', sl.set ? sliderText(sl.value) : 'No answer selected yet');
-    ui.nopref.classList.toggle('selected', sl.set && sl.viaButton);
-    ui.nopref.setAttribute('aria-pressed', sl.set && sl.viaButton ? 'true' : 'false');
-    ui.readout.textContent = sl.set ? sliderText(sl.value) : (ready ? 'Move the slider or tap “No preference” to answer.' : '');
+    ui.readout.textContent = sl.set ? sliderDisplay(sl.value) : (ready ? 'Move the slider to answer. For Neutral, tap the middle.' : '');
     ui.readout.classList.toggle('placeholder', !sl.set);
 
     var canSubmit = ready && sl.set && !busy() && !locked;
     ui.submit.disabled = !canSubmit;
     ui.submit.textContent = saving ? 'Saving…' : (T.submitButton || 'Submit');
     var h = '';
-    if (!ready) h = 'Listen to both clips all the way through to unlock the slider.';
-    else if (busy()) h = 'Wait for the clip to finish before submitting.';
-    else if (!sl.set) h = 'Choose a position on the slider (or “No preference”) to continue.';
+    if (!ready) h = 'Listen to the first ' + REQ + ' seconds of both clips to unlock the slider.';
+    else if (busy()) h = 'Wait for the ' + REQ + '-second listen to finish before submitting.';
+    else if (!sl.set) h = 'Choose a position on the slider to continue.';
     ui.hint.textContent = locked ? '' : h;
   }
 
@@ -710,10 +859,11 @@
       completesA: cl.A.completes, completesB: cl.B.completes,
       slider: sl.value,
       score: standardizedScore(sl.value, trial.a),
-      usedNoPrefButton: !!sl.viaButton,
+      preferredClip: sl.value < 0 ? 'A' : sl.value > 0 ? 'B' : 'Neutral',
+      preferenceLabel: sliderText(sl.value),
       trialStart: S.cur.startedAt,
       trialSubmit: new Date().toISOString(),
-      audioIssues: audioIssues(cl, MAX)
+      audioIssues: audioIssues(cl)
     };
     save(); // answer is stored locally before sending
     sendPending(false);
@@ -782,6 +932,11 @@
     dlg.querySelector('[data-close]').addEventListener('click', function () { dlg.close ? dlg.close() : dlg.removeAttribute('open'); });
     document.getElementById('demo-csv-resp').addEventListener('click', function () { download('demo_responses.csv', toCSV(DemoBackend.db().responses)); });
     document.getElementById('demo-csv-sess').addEventListener('click', function () { download('demo_sessions.csv', toCSV(DemoBackend.db().sessions)); });
+    document.getElementById('demo-restart-btn').addEventListener('click', function () {
+      stopAllAudio();
+      storeDel(STORE_KEY);
+      location.reload();
+    });
     document.getElementById('demo-reset').addEventListener('click', function () {
       stopAllAudio();
       storeDel(STORE_KEY);

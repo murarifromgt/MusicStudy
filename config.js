@@ -23,7 +23,7 @@ window.STUDY_CONFIG = {
   demoMode: false,
 
   /* Playback rules */
-  maxPlays: 2,                 // plays allowed per clip
+  requiredListenSeconds: 15,   // first play of each clip runs this long from the start with no pausing/skipping; after that the clip can be replayed and scrubbed freely
   audioStartTimeoutMs: 15000,  // a click that hasn't started audio after this long counts as a failed load (not a play)
   maxLoadFailures: 3,          // after this many failed loads, the clip is marked unavailable and the participant may continue
 
@@ -35,9 +35,9 @@ window.STUDY_CONFIG = {
       'It takes about 25–40 minutes. Please use headphones and find a quiet place.'
     ],
     rules: [
-      'Each clip can be played at most TWO times. A play counter is shown under each clip.',
-      'You must listen to each clip all the way through at least once before answering. The second play is optional.',
-      'Clips always start from the beginning and cannot be paused, skipped, or rewound.',
+      'The first time you play each clip, it plays the first 15 seconds from the beginning. This first listen cannot be paused, skipped, or rewound.',
+      'You must finish that 15-second listen for both clips before answering.',
+      'After that, you can replay each clip as many times as you like, pause it, and drag its bar to jump anywhere in the clip.',
       'Only one clip plays at a time.',
       'Once you submit an answer you cannot go back or change it.',
       'No names or emails are collected. You will get an anonymous ID.',
@@ -45,22 +45,40 @@ window.STUDY_CONFIG = {
     ],
     agree: 'I have read the instructions and I\'m using headphones (recommended).',
     startButton: 'Start the study',
-    additionalQuestions: ['What is your age?', 'Do you have traning in music? (Y/N)', 'Is AI music real music? (Y/N)'],
+    questionsTitle: 'A few questions about you',
+    questionsIntro: 'Please answer these before the listening part begins.',
+    continueButton: 'Continue',
     progress: 'Song {n} of {total}',
     question: 'Which clip do you prefer, and by how much?',
-    noPreferenceButton: 'No preference',
     submitButton: 'Submit and continue',
     thanksTitle: 'Thank you!',
     thanksBody: 'All of your responses have been saved. You can close this page now.'
   },
 
-  /* The five labeled points on the slider. Values must stay -100, -50, 0, 50, 100. */
+  /* Questions asked after the instructions, before the listening part.
+     id   : column name saved with the session (letters/underscores only)
+     text : the question shown to participants
+     type : 'age' (number box) or 'yesno' (Yes / No buttons) */
+  additionalQuestions: [
+    { id: 'age', text: 'What is your age?', type: 'age' },
+    { id: 'music_training', text: 'Do you have training in music?', type: 'yesno' },
+    { id: 'ai_music_is_real', text: 'Is AI music real music?', type: 'yesno' }
+  ],
+
+  /* The points on the preference bar, from Clip A (left) to Clip B (right).
+     The slider snaps to these points only. value is what gets saved:
+     whole numbers counting out from 0 (neutral) — negative = Clip A side.
+     text  : shown under the bar after a choice, and saved as preference_label
+     tick  : short label printed under each point
+     emoji : shown with the label on screen (not saved in the data) */
   sliderLabels: [
-    { value: -100, text: 'Strongly prefer A' },
-    { value:  -50, text: 'Somewhat prefer A' },
-    { value:    0, text: 'No preference' },
-    { value:   50, text: 'Somewhat prefer B' },
-    { value:  100, text: 'Strongly prefer B' }
+    { value: -3, text: 'Love Clip A',        tick: 'Love',        emoji: '😍' },
+    { value: -2, text: 'Really like Clip A', tick: 'Really like', emoji: '😊' },
+    { value: -1, text: 'Like Clip A',        tick: 'Like',        emoji: '🙂' },
+    { value:  0, text: 'Neutral',            tick: 'Neutral',     emoji: '😐' },
+    { value:  1, text: 'Like Clip B',        tick: 'Like',        emoji: '🙂' },
+    { value:  2, text: 'Really like Clip B', tick: 'Really like', emoji: '😊' },
+    { value:  3, text: 'Love Clip B',        tick: 'Love',        emoji: '😍' }
   ],
 
   /* ---------------- The 30 song pairs ----------------
