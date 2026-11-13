@@ -874,7 +874,15 @@
     saving = true;
     ui.errBox.hidden = true;
     updateUI();
-    Backend.call(S.cur.pending).then(function () {
+    // The original Sheets script rejects play counts above 2 (from the old 2-play rule),
+    // so cap playsA/B for it and send the real counts as totalPlaysA/B. Done at send time
+    // so answers already stuck on a device go through on Retry.
+    var body = Object.assign({}, S.cur.pending);
+    if (body.action === 'submit') {
+      body.totalPlaysA = body.playsA; body.totalPlaysB = body.playsB;
+      body.playsA = Math.min(body.playsA, 2); body.playsB = Math.min(body.playsB, 2);
+    }
+    Backend.call(body).then(function () {
       saving = false;
       stopAllAudio();
       S.idx += 1;

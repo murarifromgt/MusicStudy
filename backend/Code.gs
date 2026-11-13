@@ -63,7 +63,8 @@ function submit(p) {
   var score = p.clipA === 'original' ? -raw : raw; // positive = preferred the original
   rs.appendRow([rid, pid, p.sessionId, p.trial, p.pairId, p.clipA, p.clipB,
     p.preferredClip || '', p.preferenceLabel || '', raw, score === 0 ? 0 : score,
-    p.playsA, p.playsB, p.completesA, p.completesB,
+    p.totalPlaysA != null ? p.totalPlaysA : p.playsA, p.totalPlaysB != null ? p.totalPlaysB : p.playsB,
+    p.completesA, p.completesB,
     p.trialStart, p.trialSubmit, p.audioIssues || '', now]);
 
   var done = Number(ss.getRange(srow, 4).getValue()) + 1;
