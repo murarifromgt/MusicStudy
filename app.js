@@ -388,11 +388,79 @@
   function renderThanks() {
     stopAllAudio();
     show(el('section', { class: 'card center thanks' }, [
-      el('div', { class: 'big-check', 'aria-hidden': 'true', text: '✓' }),
+      el('div', { class: 'party', 'aria-hidden': 'true', text: '🎉 🥳 🎆' }),
       el('h1', { text: T.thanksTitle || 'Thank you!' }),
       el('p', { text: T.thanksBody || '' }),
+      resultsSummary(),
       el('p', { class: 'muted', text: 'Your anonymous ID: ' + S.nickname + ' · ' + S.trials.length + ' of ' + S.trials.length + ' saved' })
     ]));
+    fireworks();
+  }
+
+  // e.g. BIRDS_OF_A_FEATHER → Birds Of A Feather
+  function songName(id) {
+    return String(id).toLowerCase().split('_').map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(' ');
+  }
+
+  function resultsSummary() {
+    var r = S.results || [];
+    if (!r.length) return null; // sessions finished before this feature have no local results
+    var orig = r.filter(function (x) { return x.score > 0; }).length;
+    var ai = r.filter(function (x) { return x.score < 0; }).length;
+    var neutral = r.length - orig - ai;
+    var verdict = orig > ai ? 'You preferred the original songs! 🎤'
+      : ai > orig ? 'You preferred the AI-generated songs! 🤖'
+      : 'It\'s a tie: you liked the originals and the AI versions equally! ⚖️';
+    function seg(n, cls) { return n ? el('div', { class: 'seg ' + cls, style: 'flex:' + n }) : null; }
+    // strongest picks on each side, as a small sample
+    var sorted = r.slice().sort(function (a, b) { return b.score - a.score; });
+    var picks = [];
+    if (sorted[0] && sorted[0].score > 0) picks.push(['🎤 Original you liked most', sorted[0]]);
+    var last = sorted[sorted.length - 1];
+    if (last && last.score < 0) picks.push(['🤖 AI version you liked most', last]);
+    return el('div', { class: 'results' }, [
+      el('h2', { text: verdict }),
+      el('div', { class: 'split', 'aria-hidden': 'true' }, [seg(orig, 'orig'), seg(neutral, 'neutral'), seg(ai, 'ai')]),
+      el('div', { class: 'split-legend' }, [
+        el('span', { class: 'orig', text: 'Original: ' + orig }),
+        el('span', { class: 'neutral', text: 'Neutral: ' + neutral }),
+        el('span', { class: 'ai', text: 'AI: ' + ai })
+      ]),
+      picks.length ? el('ul', { class: 'picks' }, picks.map(function (p) {
+        return el('li', {}, [el('span', { class: 'muted', text: p[0] + ': ' }), el('strong', { text: songName(p[1].pairId) })]);
+      })) : null
+    ]);
+  }
+
+  function fireworks() {
+    if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var cv = el('canvas', { class: 'fireworks', 'aria-hidden': 'true' });
+    document.body.appendChild(cv);
+    var ctx = cv.getContext('2d'), dpr = window.devicePixelRatio || 1, parts = [], start = Date.now(), last = 0;
+    var colors = ['#ff4d6d', '#ffd84d', '#4dd2ff', '#7cff6b', '#c77dff', '#ff9f43'];
+    function size() { cv.width = innerWidth * dpr; cv.height = innerHeight * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+    size(); window.addEventListener('resize', size);
+    function burst() {
+      var x = innerWidth * (0.15 + Math.random() * 0.7), y = innerHeight * (0.1 + Math.random() * 0.4);
+      var c = colors[Math.floor(Math.random() * colors.length)];
+      for (var i = 0; i < 70; i++) {
+        var a = Math.random() * Math.PI * 2, v = 1.5 + Math.random() * 4;
+        parts.push({ x: x, y: y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1, c: c });
+      }
+    }
+    (function frame() {
+      var t = Date.now() - start;
+      if (t < 4500 && t - last > 450) { burst(); last = t; }
+      ctx.clearRect(0, 0, innerWidth, innerHeight);
+      parts = parts.filter(function (p) { return p.life > 0; });
+      parts.forEach(function (p) {
+        p.x += p.vx; p.y += p.vy; p.vy += 0.05; p.vx *= 0.985; p.life -= 0.012;
+        ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.c;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 2.2, 0, Math.PI * 2); ctx.fill();
+      });
+      if (t < 4500 || parts.length) requestAnimationFrame(frame);
+      else { window.removeEventListener('resize', size); cv.remove(); }
+    })();
   }
 
   /* =========================================================
@@ -885,6 +953,11 @@
     Backend.call(body).then(function () {
       saving = false;
       stopAllAudio();
+      if (body.action === 'submit') {
+        // kept on the device for the personal summary on the thank-you page
+        S.results = S.results || [];
+        S.results.push({ pairId: body.pairId, score: body.score });
+      }
       S.idx += 1;
       if (S.idx >= S.trials.length) { S.done = true; S.cur = null; save(); renderThanks(); return; }
       S.cur = newTrialState();
