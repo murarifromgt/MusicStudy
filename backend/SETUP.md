@@ -11,7 +11,7 @@
 
 Results appear in two tabs, created automatically on the first participant:
 
-- **Sessions**: one row per participant: `participant_id` (1, 2, 3…), start/finish times, device, and the answers to the opening questions.
+- **Sessions**: one row per participant: `participant_id` (33, 34, 35… — set by `FIRST_PARTICIPANT_ID` in Code.gs), start/finish times, device, and the answers to the opening questions.
 - **Responses**: one row per song pair: `preferred_clip` (A / B / Neutral), `preference_label` (e.g. "Really like Clip B"), `slider_raw` (−3…+3, negative = Clip A), `score_original_vs_ai` (positive = preferred the original), play counts, and timings.
 
 **Changing the script later:** edit, save, then **Deploy → Manage deployments → ✏️ Edit → Version: New version → Deploy**. This keeps the same URL. Creating a *New deployment* instead gives a new URL that you'd have to paste into `config.js` again.

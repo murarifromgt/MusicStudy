@@ -21,6 +21,7 @@ var RESPONSE_COLS = ['response_id', 'participant_id', 'session_id', 'trial_numbe
 var MAX_BODY = 20000;   // bytes; real requests are well under 10 KB
 var MAX_TRIALS = 500;
 var MAX_PLAYS = 1000;   // replays are unlimited on the site; this only blocks absurd values
+var FIRST_PARTICIPANT_ID = 33; // participant IDs start here (never goes backwards if the counter is already higher)
 var SLIDER_LIMIT = 100; // the site uses -3..3; kept loose in case the scale is changed in config.js
 
 function doGet() {
@@ -56,7 +57,7 @@ function start(p) {
   if (row) return { ok: true, nickname: String(sh.getRange(row, 1).getValue()), resumed: true };
 
   var props = PropertiesService.getScriptProperties();
-  var id = Number(props.getProperty('nextId') || 1);
+  var id = Math.max(Number(props.getProperty('nextId')) || 1, FIRST_PARTICIPANT_ID);
   props.setProperty('nextId', String(id + 1));
 
   var now = new Date().toISOString();

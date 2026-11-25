@@ -9,7 +9,7 @@
 
   // 0→1, 1→2, 2→3 …
   function nicknameFor(n) {
-    return String(n + 1);
+    return String(n + 33); // matches FIRST_PARTICIPANT_ID in backend/Code.gs
   }
 
   function seedFrom(str) {
